@@ -58,6 +58,143 @@ def load_env_file(path: Path = Path(".env")) -> None:
 # Choose any 3 of the 15 points, e.g. CHOSEN_POINTS = [1, 7, 15]. Your agent
 # gives a PASS or FAIL verdict on these 3 points only, with your own rule for each.
 CHOSEN_POINTS: list[int] = []  ### YOUR CODE HERE
+_SUMMARY_SYSTEM = (
+    "You write short investment summaries. You are given pre-computed "
+    "numbers and PASS/FAIL verdicts. Do NOT recompute anything, do NOT "
+    "change any verdict, and do NOT invent any number. Write two or three "
+    "sentences in English, mention the key number for each point, and "
+    "state a shortfall plainly when a verdict is FAIL."
+)
+
+
+def _parse_sql_rows(text: str) -> list[dict[str, str]]:
+    """Parse one sql_query tool result ("col | col" header, then rows)."""
+    lines = [line for line in str(text).strip().splitlines() if line.strip()]
+    if not lines or lines[0].startswith("SQL error:"):
+        raise ValueError(str(text)[:200])
+    columns = [c.strip() for c in lines[0].split(" | ")]
+    rows: list[dict[str, str]] = []
+    for line in lines[1:]:
+        if line.startswith("...") or line == "(no rows)":
+            continue
+        values = [v.strip() for v in line.split(" | ")]
+        if len(values) == len(columns):
+            rows.append(dict(zip(columns, values)))
+    return rows
+
+
+def _sql(sql_tool: Any, query: str) -> list[dict[str, str]]:
+    """Run one SELECT through the provided sql_query tool only."""
+    return _parse_sql_rows(sql_tool.invoke({"query": query}))
+
+
+def _compute_points(sql_tool: Any) -> dict[str, Any]:
+    """Compute points 1, 5, 6 in SQL + Python. Returns verdicts + evidence."""
+    industry = _sql(sql_tool, "SELECT industry FROM company")[0]["industry"]
+    safe_industry = industry.replace("'", "''")
+    medians = _sql(
+        sql_tool,
+        "SELECT revenue_growth_2y_pct, operating_margin_pct "
+        f"FROM industry_medians WHERE industry = '{safe_industry}'",
+    )[0]
+    median_growth = float(medians["revenue_growth_2y_pct"])
+    median_margin = float(medians["operating_margin_pct"])
+
+    revenue = {
+        row["year"]: float(row["revenue_musd"])
+        for row in _sql(
+            sql_tool,
+            "SELECT substr(order_date, 1, 4) AS year, "
+            "ROUND(SUM(amount) / 1000, 2) AS revenue_musd FROM orders "
+            "WHERE substr(order_date, 1, 4) IN ('2023', '2024', '2025') "
+            "GROUP BY year",
+        )
+    }
+    costs = {
+        row["year"]: (
+            float(row["cos_musd"]),
+            float(row["sa_musd"]),
+            float(row["rd_musd"]),
+        )
+        for row in _sql(
+            sql_tool,
+            "SELECT substr(month, 1, 4) AS year, "
+            "ROUND(SUM(cost_of_sales) / 1000, 2) AS cos_musd, "
+            "ROUND(SUM(selling_admin) / 1000, 2) AS sa_musd, "
+            "ROUND(SUM(research_development) / 1000, 2) AS rd_musd "
+            "FROM monthly_costs "
+            "WHERE substr(month, 1, 4) IN ('2023', '2024', '2025') "
+            "GROUP BY year",
+        )
+    }
+
+    def margin(year: str) -> float:
+        cos, sa, rd = costs[year]
+        return (revenue[year] - cos - sa - rd) / revenue[year] * 100.0
+
+    growth_2y = (revenue["2025"] - revenue["2023"]) / revenue["2023"] * 100.0
+    margin_2024 = margin("2024")
+    margin_2025 = margin("2025")
+    points = {
+        1: "PASS" if growth_2y > median_growth else "FAIL",
+        5: "PASS" if margin_2025 > median_margin else "FAIL",
+        6: "PASS" if margin_2025 >= margin_2024 else "FAIL",
+    }
+    return {
+        "industry": industry,
+        "growth_2y_pct": growth_2y,
+        "median_growth_2y_pct": median_growth,
+        "margin_2024_pct": margin_2024,
+        "margin_2025_pct": margin_2025,
+        "median_margin_pct": median_margin,
+        "revenue_2025_musd": revenue["2025"],
+        "points": points,
+    }
+
+
+def _template_summary(name: str, ev: dict[str, Any]) -> str:
+    """Deterministic 2-3 sentence summary from the computed evidence."""
+    p = ev["points"]
+    return (
+        f"Point 1 {p[1]}: revenue grew {ev['growth_2y_pct']:.1f}% over two years, "
+        f"against an industry median of {ev['median_growth_2y_pct']:.1f}%. "
+        f"Point 5 {p[5]}: the FY2025 operating margin was {ev['margin_2025_pct']:.1f}%, "
+        f"against an industry median of {ev['median_margin_pct']:.1f}%. "
+        f"Point 6 {p[6]}: the operating margin was {ev['margin_2024_pct']:.1f}% in FY2024 "
+        f"and {ev['margin_2025_pct']:.1f}% in FY2025."
+    )
+
+
+def _llm_summary(model: Any, name: str, ev: dict[str, Any]) -> str | None:
+    """Ask the model to polish the template summary; return None on failure."""
+    if model is None:
+        return None
+    try:
+        from langchain_core.messages import HumanMessage, SystemMessage
+
+        p = ev["points"]
+        prompt = (
+            f"Company: {name} (industry: {ev['industry']}).\n"
+            f"Point 1 {p[1]}: 2-year revenue growth {ev['growth_2y_pct']:.1f}%, "
+            f"industry median {ev['median_growth_2y_pct']:.1f}%.\n"
+            f"Point 5 {p[5]}: FY2025 operating margin {ev['margin_2025_pct']:.1f}%, "
+            f"industry median {ev['median_margin_pct']:.1f}%.\n"
+            f"Point 6 {p[6]}: operating margin FY2024 {ev['margin_2024_pct']:.1f}%, "
+            f"FY2025 {ev['margin_2025_pct']:.1f}%.\n"
+            "Rewrite this as two or three sentences, keeping every verdict "
+            "and every number exactly as given."
+        )
+        result = model.invoke([SystemMessage(content=_SUMMARY_SYSTEM),
+                               HumanMessage(content=prompt)])
+        text = str(getattr(result, "content", result)).strip()
+        if len(text) < 20:
+            return None
+        for point_no in (1, 5, 6):
+            if p[point_no] not in text.upper():
+                return None
+        return text
+    except Exception:
+        return None
 
 
 def build_agent() -> Any:
@@ -72,7 +209,15 @@ def build_agent() -> Any:
     you will probably create one tool-calling agent per company there.
     """
     ### YOUR CODE HERE
-    return None
+    import os
+
+    try:
+        from langchain_deepseek import ChatDeepSeek
+    except Exception:
+        return None
+    if not os.environ.get("DEEPSEEK_API_KEY", "").strip():
+        return None
+    return ChatDeepSeek(model=MODEL_NAME, temperature=0)
 
 
 async def analyze_companies(agent: Any, companies: dict[str, list[Any]]) -> dict[str, dict[str, Any]]:
@@ -109,10 +254,24 @@ async def analyze_companies(agent: Any, companies: dict[str, list[Any]]) -> dict
     You may analyse companies in parallel (e.g. ``asyncio.gather``).
     """
     ### YOUR CODE HERE
-    _ = agent
-    return {name: {"points": {}, "summary": ""} for name in companies}
-
-
+    results: dict[str, dict[str, Any]] = {}
+    for name, tools in companies.items():
+        try:
+            sql_tool = tools[2]
+            evidence = _compute_points(sql_tool)
+            points = evidence["points"]
+            summary = _llm_summary(agent, name, evidence)
+            if summary is None:
+                summary = _template_summary(name, evidence)
+            results[name] = {"points": points, "summary": summary}
+        except Exception as exc:  # one company must never crash the run
+            results[name] = {
+            "points": {1: "FAIL", 5: "FAIL", 6: "FAIL"},
+            "summary": f"Evidence could not be retrieved ({exc}); "
+            "verdicts are conservative FAILs.",
+        }
+    return results
+    
 # Everything below is provided runner/scoring code. No edits are needed.
 # Your code must read company data only through these tools: do not open
 # company.db or interviews.dat directly.
