@@ -57,7 +57,7 @@ def load_env_file(path: Path = Path(".env")) -> None:
 
 # Choose any 3 of the 15 points, e.g. CHOSEN_POINTS = [1, 7, 15]. Your agent
 # gives a PASS or FAIL verdict on these 3 points only, with your own rule for each.
-CHOSEN_POINTS: list[int] = []  ### YOUR CODE HERE
+CHOSEN_POINTS: list[int] = [1,5,6]  ### YOUR CODE HERE
 _SUMMARY_SYSTEM = (
     "You write short investment summaries. You are given pre-computed "
     "numbers and PASS/FAIL verdicts. Do NOT recompute anything, do NOT "
