@@ -171,13 +171,15 @@ companies with the same tools and the same answer key rules, but different
 names and wording, and scores your 3 points only.
 
 ## Homework 3 solution:
-> to students: this is your report, see the homework description.
-
+This project implements an investment screening agent based on Points 1, 5, and 6 of Philip Fisher’s framework. It evaluates each company’s sales growth, operating profitability relative to its industry, and ability to maintain its operating margin. For each company, the agent returns a PASS or FAIL verdict for each point and a short summary.
 ### My 3 points and rules
-> for each point: why you chose it, your PASS rule in one or two sentences, and the evidence it uses. Quote Fisher where it helps.
-
+| Fisher point | Why I chose it | PASS rule and evidence |
+| --- | --- | --- |
+| **1. Market potential for sales growth** | I chose this point to see whether a company's sales are growing faster than those of its industry peers. | PASS if cumulative revenue growth from FY2023 to FY2025 is strictly above the median two-year revenue growth for the company's industry. I sum annual sales from `orders` and use the benchmark from `industry_medians`. |
+| **5. Worthwhile profit margin** | I chose this point because strong sales can still leave a company with a thin operating margin. Comparing margins within the same industry gives me a benchmark for profitability. | PASS if the company's FY2025 operating margin is strictly above its industry median. I calculate the margin as `(revenue − cost of sales − selling and administrative expenses − R&D expenses) / revenue`. The inputs come from `orders` and `monthly_costs`, and the benchmark comes from `industry_medians`. |
+| **6. Maintaining or improving profit margins** | I chose this point because a single year's margin cannot tell me whether a company is maintaining its profitability over time. | PASS if the FY2025 operating margin is at least as high as the FY2024 operating margin. I calculate both margins using the same formula and data sources as Point 5. |
 ### Design
-> a visualization of your agent design and one paragraph describing it.
+
 
 ### Results
 > your point score on `public_test`, the companies where your verdicts disagree with the public answers, and why.
