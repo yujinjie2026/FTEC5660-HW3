@@ -173,13 +173,31 @@ names and wording, and scores your 3 points only.
 ## Homework 3 solution:
 This project implements an investment screening agent based on Points 1, 5, and 6 of Philip Fisher’s framework. It evaluates each company’s sales growth, operating profitability relative to its industry, and ability to maintain its operating margin. For each company, the agent returns a PASS or FAIL verdict for each point and a short summary.
 ### My 3 points and rules
+
 | Fisher point | Why I chose it | PASS rule and evidence |
 | --- | --- | --- |
-| **1. Market potential for sales growth** | I chose this point to see whether a company's sales are growing faster than those of its industry peers. | PASS if cumulative revenue growth from FY2023 to FY2025 is strictly above the median two-year revenue growth for the company's industry. I sum annual sales from `orders` and use the benchmark from `industry_medians`. |
-| **5. Worthwhile profit margin** | I chose this point because strong sales can still leave a company with a thin operating margin. Comparing margins within the same industry gives me a benchmark for profitability. | PASS if the company's FY2025 operating margin is strictly above its industry median. I calculate the margin as `(revenue − cost of sales − selling and administrative expenses − R&D expenses) / revenue`. The inputs come from `orders` and `monthly_costs`, and the benchmark comes from `industry_medians`. |
-| **6. Maintaining or improving profit margins** | I chose this point because a single year's margin cannot tell me whether a company is maintaining its profitability over time. | PASS if the FY2025 operating margin is at least as high as the FY2024 operating margin. I calculate both margins using the same formula and data sources as Point 5. |
+| **1. Market potential for sales growth** | I wanted to see whether the company's sales were growing faster than typical sales in its industry. I used FY2023 and FY2025 because both are complete fiscal years, while the dataset only covers the first half of FY2026. | PASS if cumulative revenue growth from FY2023 to FY2025 is strictly higher than the median two-year revenue growth for the company's own industry. I sum order amounts by year from `orders` and obtain the industry benchmark from `industry_medians`. |
+| **5. Worthwhile profit margin** | I wanted to see how much of the company's revenue remained after operating costs and expenses. I used the latest complete fiscal year and compared the company with its own industry because typical margins differ across industries. | PASS if the FY2025 operating margin is strictly higher than the industry median. I calculate the margin as `(revenue - cost of sales - selling and administrative expenses - R&D expenses) / revenue`. I use `orders` for revenue, `monthly_costs` for costs and expenses, and `industry_medians` for the benchmark. |
+| **6. Maintaining or improving profit margins** | A company can have a higher margin than its peers and still be losing profitability over time. Comparing FY2025 with FY2024 lets me check whether the company maintained its own margin. A flat margin meets this criterion. | PASS if the FY2025 operating margin is at least as high as the FY2024 operating margin. I calculate both margins with the same formula, using `orders` for revenue and `monthly_costs` for costs and expenses. |
+
 ### Design
 
+```mermaid
+graph TD
+    A["Retrieve revenue, costs, and industry benchmarks with the LangChain SQL tool"]
+    A --> B["Calculate growth and operating margins in Python"]
+    B --> C["Apply the rules for Fisher Points 1, 5, and 6"]
+    C --> D["Try a DeepSeek summary when configured"]
+    D -->|Summary accepted| F["Write verdicts and summary to results.csv"]
+    D -->|Summary unavailable or rejected| E["Generate a summary using the built-in template"]
+    E --> F
+```
+
+For each company, I use the provided LangChain `sql_query` tool to retrieve annual revenue, operating costs, and the relevant industry benchmarks. My Python code calculates the metrics and applies the rules for Points 1, 5, and 6 to assign the PASS or FAIL verdicts. When DeepSeek is configured, `deepseek-v4-flash` receives the computed figures and verdicts through LangChain and drafts a short summary. The program checks the summary's length and whether it contains the expected verdict words. If the model does not return a usable summary, the program generates one from the built-in template using the same figures and verdicts. Each company gets one row in `results.csv`.
 
 ### Results
-> your point score on `public_test`, the companies where your verdicts disagree with the public answers, and why.
+I used an AI assistant to run the public test three times and check the verdicts against `public_test/ground_truth.json`. The command was `python3 hw3.py --data-folder public_test`, and the program used the built-in summary template in all three runs.
+
+My agent achieved a **balanced point score of 100.0%** in every run. It correctly classified **60 out of 60 verdicts across 20 companies**, including **42 out of 42 actual PASS cases** and **18 out of 18 actual FAIL cases**.
+
+I found **no companies whose verdicts disagreed with the public answers** on Points 1, 5, or 6, so there were no discrepancies to explain.
