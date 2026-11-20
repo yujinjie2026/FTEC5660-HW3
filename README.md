@@ -184,13 +184,17 @@ This project implements an investment screening agent based on Points 1, 5, and 
 
 ```mermaid
 graph TD
-    A["Retrieve revenue, costs, and industry benchmarks with the LangChain SQL tool"]
-    A --> B["Calculate growth and operating margins in Python"]
-    B --> C["Apply the rules for Fisher Points 1, 5, and 6"]
-    C --> D["Try a DeepSeek summary when configured"]
-    D -->|Summary accepted| F["Write verdicts and summary to results.csv"]
-    D -->|Summary unavailable or rejected| E["Generate a summary using the built-in template"]
-    E --> F
+    A["Retrieve company data with the LangChain sql_query tool"]
+    A --> B["Point 1 compares two-year revenue growth with the industry median"]
+    A --> C["Point 5 compares FY2025 operating margin with the industry median"]
+    A --> D["Point 6 compares FY2025 operating margin with FY2024"]
+    B --> E["Python records the three verdicts and supporting figures"]
+    C --> E
+    D --> E
+    E --> F["Try a DeepSeek summary when configured"]
+    F -->|Summary accepted| H["Write verdicts and summary to results.csv"]
+    F -->|Summary unavailable or rejected| G["Use the built-in summary template"]
+    G --> H
 ```
 
 For each company, I use the provided LangChain `sql_query` tool to retrieve annual revenue, operating costs, and the relevant industry benchmarks. My Python code calculates the metrics and applies the rules for Points 1, 5, and 6 to assign the PASS or FAIL verdicts. When DeepSeek is configured, `deepseek-v4-flash` receives the computed figures and verdicts through LangChain and drafts a short summary. The program checks the summary's length and whether it contains the expected verdict words. If the model does not return a usable summary, the program generates one from the built-in template using the same figures and verdicts. Each company gets one row in `results.csv`.
